@@ -15,4 +15,4 @@ bash train_mrnet.sh
 This will train three models for each view (sagittal, axial, coronal) of each task (acl tear recognition, meniscal tear recognition, abnormalities recognition), for a total of 9 models. After that, a logistic regression model is trained, for each task, to combine the predictions of the different view models.
 All checkpoints, training and validation logs, and results will be saved inside the ```experiment``` folder (it will be created if it doesn't exists).
  
-Training and evaluation code is based on PyTorch and scikit-learn.
+Training and evaluation code is based on PyTorch and scikit-learn frameworks. Some parts are borrowed from https://github.com/ahmedbesbes/mrnet .
