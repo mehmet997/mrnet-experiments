@@ -29,20 +29,21 @@ def train_model(model, train_loader, epoch, num_epochs, optimizer, writer, curre
 
     model = model.to(device)
 
-    y_preds = []
-    y_trues = []
+    y_preds = np.array([])
+    y_trues = np.array([])
     losses = []
 
-    for i, (image, label, weight) in enumerate(train_loader):
+    for i, (images, label, weight) in enumerate(train_loader):
 
-        image = image.to(device)
+        images = [image.to(device).float() for image in images]
+        # label = label[0]
         label = label.to(device)
         weight = weight.to(device)
 
-        prediction = model(image.float())
+        prediction = model(images)
 
         loss = F.binary_cross_entropy_with_logits(prediction, label, weight=weight)
-        
+
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -52,36 +53,43 @@ def train_model(model, train_loader, epoch, num_epochs, optimizer, writer, curre
 
         probas = torch.sigmoid(prediction)
 
-        y_trues.append(int(label[0]))
-        y_preds.append(probas[0].item())
+        if y_preds.size == 0:
+            y_trues = np.asarray([[int(x) for x in label[0]]])
+            y_preds = np.asarray([[x.item() for x in probas[0]]])
+        else:
+            y_trues = np.vstack((y_trues, [int(x) for x in label[0]]))
+            y_preds = np.vstack((y_preds, [x.item() for x in probas[0]]))
 
-        try:
-            auc = metrics.roc_auc_score(y_trues, y_preds)
-        except:
-            auc = 0.5
+        multiclass_auc, acl_auc, men_auc, abn_auc = calculata_auc_values(y_preds, y_trues)
 
         writer.add_scalar('Train/Loss', loss_value,
                           epoch * len(train_loader) + i)
-        writer.add_scalar('Train/AUC', auc, epoch * len(train_loader) + i)
+        writer.add_scalar('Train/AUC', multiclass_auc, epoch * len(train_loader) + i)
+        writer.add_scalar('Train/ACL_AUC', acl_auc, epoch * len(train_loader) + i)
+        writer.add_scalar('Train/MENISCUS_AUC', men_auc, epoch * len(train_loader) + i)
+        writer.add_scalar('Train/ABNORMAL_AUC', abn_auc, epoch * len(train_loader) + i)
 
         if (i % log_every == 0) & (i > 0):
-            print('''[Epoch: {0} / {1} |Single batch number : {2} / {3} ]| avg train loss {4} | train auc : {5} | lr : {6}'''.
-                  format(
-                      epoch + 1,
-                      num_epochs,
-                      i,
-                      len(train_loader),
-                      np.round(np.mean(losses), 4),
-                      np.round(auc, 4),
-                      current_lr
-                  )
-                  )
+            print(
+                '''[Epoch: {0} / {1} |Single batch number : {2} / {3} ]| avg train loss {4} | train auc_multiclass : {5} | lr : {6}'''.
+                    format(
+                    epoch + 1,
+                    num_epochs,
+                    i,
+                    len(train_loader),
+                    np.round(np.mean(losses), 4),
+                    np.round(multiclass_auc, 4),
+                    current_lr
+                )
+            )
 
-    writer.add_scalar('Train/AUC_epoch', auc, epoch)
-
+    writer.add_scalar('Train/AUC_epoch', multiclass_auc, epoch)
+    writer.add_scalar('Train/ACL_AUC_epoch', acl_auc, epoch)
+    writer.add_scalar('Train/MENISCUS_AUC_epoch', men_auc, epoch)
+    writer.add_scalar('Train/ABNORMAL_AUC_epoch', abn_auc, epoch)
     train_loss_epoch = np.round(np.mean(losses), 4)
-    train_auc_epoch = np.round(auc, 4)
-    
+    train_auc_epoch = np.round(multiclass_auc, 4)
+
     return train_loss_epoch, train_auc_epoch
 
 
@@ -91,18 +99,18 @@ def evaluate_model(model, val_loader, epoch, num_epochs, writer, current_lr, dev
     """
     model.eval()
 
-    y_trues = []
-    y_preds = []
+    y_preds = np.array([])
+    y_trues = np.array([])
     y_class_preds = []
     losses = []
 
-    for i, (image, label, weight) in enumerate(val_loader):
+    for i, (images, label, weight) in enumerate(val_loader):
 
-        image = image.to(device)
+        images = [image.to(device).float() for image in images]
         label = label.to(device)
         weight = weight.to(device)
 
-        prediction = model.forward(image.float())
+        prediction = model.forward(images)
 
         loss = F.binary_cross_entropy_with_logits(prediction, label, weight=weight)
 
@@ -111,35 +119,43 @@ def evaluate_model(model, val_loader, epoch, num_epochs, writer, current_lr, dev
 
         probas = torch.sigmoid(prediction)
 
-        y_trues.append(int(label[0]))
-        y_preds.append(probas[0].item())
-        y_class_preds.append((probas[0] > 0.5).float().item())
+        if y_preds.size == 0:
+            y_trues = np.asarray([[int(x) for x in label[0]]])
+            y_preds = np.asarray([[x.item() for x in probas[0]]])
+            y_class_preds = (probas.cpu()[0] > 0.5).float()
+        else:
+            y_trues = np.vstack((y_trues, [int(x) for x in label[0]]))
+            y_preds = np.vstack((y_preds, [x.item() for x in probas[0]]))
+            y_class_preds = np.vstack((y_class_preds, (probas.cpu()[0] > 0.5).float()))
 
-        try:
-            auc = metrics.roc_auc_score(y_trues, y_preds)
-        except:
-            auc = 0.5
+        multiclass_auc, acl_auc, men_auc, abn_auc = calculata_auc_values(y_preds, y_trues)
 
         writer.add_scalar('Val/Loss', loss_value, epoch * len(val_loader) + i)
-        writer.add_scalar('Val/AUC', auc, epoch * len(val_loader) + i)
-
+        writer.add_scalar('Val/AUC', multiclass_auc, epoch * len(val_loader) + i)
+        writer.add_scalar('Val/ACL_AUC', acl_auc, epoch * len(val_loader) + i)
+        writer.add_scalar('Val/MENISCUS_AUC', men_auc, epoch * len(val_loader) + i)
+        writer.add_scalar('Val/ABNORMAL_AUC', abn_auc, epoch * len(val_loader) + i)
         if (i % log_every == 0) & (i > 0):
-            print('''[Epoch: {0} / {1} |Single batch number : {2} / {3} ] | avg val loss {4} | val auc : {5} | lr : {6}'''.
-                  format(
-                      epoch + 1,
-                      num_epochs,
-                      i,
-                      len(val_loader),
-                      np.round(np.mean(losses), 4),
-                      np.round(auc, 4),
-                      current_lr
-                  )
-                  )
+            print(
+                '''[Epoch: {0} / {1} |Single batch number : {2} / {3} ] | avg val loss {4} | val auc_multiclass : {5} | lr : {6}'''.
+                    format(
+                    epoch + 1,
+                    num_epochs,
+                    i,
+                    len(val_loader),
+                    np.round(np.mean(losses), 4),
+                    np.round(multiclass_auc, 4),
+                    current_lr
+                )
+            )
 
-    writer.add_scalar('Val/AUC_epoch', auc, epoch)
+    writer.add_scalar('Val/AUC_epoch', multiclass_auc, epoch)
+    writer.add_scalar('Val/ACL_AUC_epoch', acl_auc, epoch)
+    writer.add_scalar('Val/MENISCUS_AUC_epoch', men_auc, epoch)
+    writer.add_scalar('Val/ABNORMAL_AUC_epoch', abn_auc, epoch)
 
     val_loss_epoch = np.round(np.mean(losses), 4)
-    val_auc_epoch = np.round(auc, 4)
+    val_auc_epoch = np.round(multiclass_auc, 4)
 
     val_accuracy, val_sensitivity, val_specificity = ut.accuracy_sensitivity_specificity(y_trues, y_class_preds)
     val_accuracy = np.round(val_accuracy, 4)
@@ -148,9 +164,35 @@ def evaluate_model(model, val_loader, epoch, num_epochs, writer, current_lr, dev
 
     return val_loss_epoch, val_auc_epoch, val_accuracy, val_sensitivity, val_specificity
 
+
+def calculata_auc_values(y_preds, y_trues):
+    try:
+        multiclass_auc = metrics.roc_auc_score(y_trues, y_preds, multi_class='ovr', average="macro")
+    except:
+        multiclass_auc = 0.5
+    # acl AUC
+    try:
+
+        acl_auc = metrics.roc_auc_score(y_trues[:, 0], y_preds[:, 0])
+    except:
+        acl_auc = 0.5
+    # meniscus AUC
+    try:
+        men_auc = metrics.roc_auc_score(y_trues[:, 1], y_preds[:, 1])
+    except:
+        men_auc = 0.5
+    # abnormal AUC
+    try:
+        abn_auc = metrics.roc_auc_score(y_trues[:, 2], y_preds[:, 2])
+    except:
+        abn_auc = 0.5
+    return multiclass_auc, acl_auc, men_auc, abn_auc
+
+
 def get_lr(optimizer):
     for param_group in optimizer.param_groups:
         return param_group['lr']
+
 
 def run(args):
     random.seed(args.seed)
@@ -160,14 +202,14 @@ def run(args):
 
     # create dirs to store experiment checkpoints, logs, and results
     exp_dir_name = args.experiment
-    exp_dir = os.path.join('experiments', exp_dir_name)
+    exp_dir = os.path.join('/content/drive/MyDrive/CV_Project/experiments', exp_dir_name)
     if not os.path.exists(exp_dir):
         os.makedirs(exp_dir)
         os.makedirs(os.path.join(exp_dir, 'models'))
         os.makedirs(os.path.join(exp_dir, 'logs'))
         os.makedirs(os.path.join(exp_dir, 'results'))
 
-    log_root_folder = exp_dir + "/logs/{0}/{1}/".format(args.task, args.plane)
+    log_root_folder = exp_dir + "/logs/"
     if args.flush_history == 1:
         objects = os.listdir(log_root_folder)
         for f in objects:
@@ -181,11 +223,13 @@ def run(args):
     writer = SummaryWriter(logdir)
 
     # create training and validation set
-    train_dataset = MRDataset(args.data_path, args.task, args.plane, train=True)
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=1, shuffle=True, num_workers=4, drop_last=False)
+    train_dataset = MRDataset(args.data_path, train=True)
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=1, shuffle=True, num_workers=4,
+                                               drop_last=False)
 
-    validation_dataset = MRDataset(args.data_path, args.task, args.plane, train=False)
-    validation_loader = torch.utils.data.DataLoader(validation_dataset, batch_size=1, shuffle=-True, num_workers=2, drop_last=False)
+    validation_dataset = MRDataset(args.data_path, train=False)
+    validation_loader = torch.utils.data.DataLoader(validation_dataset, batch_size=1, shuffle=-True, num_workers=2,
+                                                    drop_last=False)
 
     if torch.cuda.is_available():
         device = torch.device('cuda')
@@ -223,12 +267,15 @@ def run(args):
         current_lr = get_lr(optimizer)
 
         t_start = time.time()
-        
+
         # train
-        train_loss, train_auc = train_model(mrnet, train_loader, epoch, num_epochs, optimizer, writer, current_lr, device, log_every)
-        
+        train_loss, train_auc = train_model(mrnet, train_loader, epoch, num_epochs, optimizer, writer, current_lr,
+                                            device, log_every)
+
         # evaluate
-        val_loss, val_auc, val_accuracy, val_sensitivity, val_specificity = evaluate_model(mrnet, validation_loader, epoch, num_epochs, writer, current_lr, device)
+        val_loss, val_auc, val_accuracy, val_sensitivity, val_specificity = evaluate_model(mrnet, validation_loader,
+                                                                                           epoch, num_epochs, writer,
+                                                                                           current_lr, device)
 
         if args.lr_scheduler == 'plateau':
             scheduler.step(val_loss)
@@ -250,9 +297,9 @@ def run(args):
             best_val_sensitivity = val_sensitivity
             best_val_specificity = val_specificity
             if bool(args.save_model):
-                file_name = f'model_{args.prefix_name}_{args.task}_{args.plane}.pth'
+                file_name = f'model_{args.prefix_name}.pth'
                 for f in os.listdir(exp_dir + '/models/'):
-                    if (args.task in f) and (args.plane in f) and (args.prefix_name in f):
+                    if (args.prefix_name in f):
                         os.remove(exp_dir + f'/models/{f}')
                 torch.save(mrnet, exp_dir + f'/models/{file_name}')
 
@@ -266,7 +313,7 @@ def run(args):
             break
 
     # save results to csv file
-    with open(os.path.join(exp_dir, 'results', f'model_{args.prefix_name}_{args.task}_{args.plane}-results.csv'), 'w') as res_file:
+    with open(os.path.join(exp_dir, 'results', f'model_{args.prefix_name}-results.csv'), 'w') as res_file:
         fw = csv.writer(res_file, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
         fw.writerow(['LOSS', 'AUC-best', 'Accuracy-best', 'Sensitivity-best', 'Specifity-best'])
         fw.writerow([best_val_loss, best_val_auc, best_val_accuracy, best_val_sensitivity, best_val_specificity])
@@ -278,10 +325,6 @@ def run(args):
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-t', '--task', type=str, required=True,
-                        choices=['abnormal', 'acl', 'meniscus'])
-    parser.add_argument('-p', '--plane', type=str, required=True,
-                        choices=['sagittal', 'coronal', 'axial'])
     parser.add_argument('--data-path', type=str)
     parser.add_argument('--prefix_name', type=str, required=True)
     parser.add_argument('--experiment', type=str, required=True)
